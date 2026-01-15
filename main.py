@@ -4,8 +4,9 @@ import random
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="YouTube Multi-Source API")
+app = FastAPI(title="Piped API Ultimate Proxy")
 
+# Autorise ton futur Frontend à appeler cette API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,25 +14,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Sélection des instances les plus stables de ta liste
+# Ta liste d'instances mise à jour
 INSTANCES = [
     "https://pipedapi.tokhmi.xyz",
     "https://pipedapi.moomoo.me",
     "https://api-piped.mha.fi",
-    "https://piped-api.garudalinux.org",
     "https://pipedapi.leptons.xyz",
-    "https://piped-api.lunar.icu",
-    "https://pipedapi.r4fo.com",
-    "https://pipedapi.nosebs.ru",
-    "https://pa.il.ax",
-    "https://api.piped.projectsegfau.lt",
     "https://pipedapi.astartes.nl",
-    "https://pipedapi.osphost.fi"
+    "https://pipedapi.adminforge.de"
 ]
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-}
 
 def extract_id(url: str):
     pattern = r"(?:v=|\/|be\/)([0-9A-Za-z_-]{11})"
@@ -39,36 +30,60 @@ def extract_id(url: str):
     return match.group(1) if match else None
 
 @app.get("/extract")
-def extract(url: str = Query(..., description="URL YouTube")):
+def extract(url: str = Query(..., description="Lien YouTube")):
     video_id = extract_id(url)
     if not video_id:
-        raise HTTPException(status_code=400, detail="URL YouTube invalide")
+        raise HTTPException(status_code=400, detail="ID de vidéo introuvable")
 
-    # On mélange la liste pour ne pas toujours taper sur la même instance
     random.shuffle(INSTANCES)
     
-    # On tente les 5 premières instances sélectionnées au hasard
-    for instance in INSTANCES[:5]:
+    for instance in INSTANCES[:4]:
         try:
-            response = requests.get(
-                f"{instance}/streams/{video_id}", 
-                headers=HEADERS, 
-                timeout=7
-            )
-            if response.status_code == 200:
-                data = response.json()
+            # On utilise l'endpoint /streams/:videoId de la doc
+            r = requests.get(f"{instance}/streams/{video_id}", timeout=8)
+            
+            if r.status_code == 200:
+                data = r.json()
+                
+                # On structure la réponse selon la doc officielle que tu as envoyée
                 return {
-                    "source_used": instance,
                     "title": data.get("title"),
-                    "duration": data.get("duration"),
+                    "description": data.get("description"),
+                    "uploader": data.get("uploader"),
+                    "duration": data.get("duration"), # en secondes
                     "thumbnail": data.get("thumbnailUrl"),
-                    "video": data.get("videoStreams"),
-                    "audio": data.get("audioStreams")
+                    "proxyUrl": data.get("proxyUrl"), # Utile pour contourner les blocages d'images
+                    "video": [
+                        {
+                            "url": v.get("url"),
+                            "quality": v.get("quality"),
+                            "format": v.get("format"),
+                            "codec": v.get("codec"),
+                            "size_bytes": v.get("bitrate") # La doc dit: bitrate in bytes
+                        } for v in data.get("videoStreams", [])
+                    ],
+                    "audio": [
+                        {
+                            "url": a.get("url"),
+                            "format": a.get("format"),
+                            "quality": a.get("quality")
+                        } for a in data.get("audioStreams", [])
+                    ],
+                    "subtitles": data.get("subtitles", []) # Ajout des sous-titres
                 }
         except:
             continue
             
-    raise HTTPException(
-        status_code=503, 
-        detail="Toutes les instances ont échoué. YouTube bloque temporairement les accès serveurs."
-    )
+    raise HTTPException(status_code=503, detail="Instances saturées ou YouTube bloque l'IP du serveur.")
+
+# Nouveau : Endpoint de suggestions de recherche (basé sur ta doc)
+@app.get("/suggest")
+def suggest(q: str):
+    for instance in INSTANCES:
+        try:
+            r = requests.get(f"{instance}/suggestions", params={"query": q}, timeout=5)
+            if r.status_code == 200:
+                return r.json() # Renvoie une liste de mots-clés
+        except:
+            continue
+    return []
